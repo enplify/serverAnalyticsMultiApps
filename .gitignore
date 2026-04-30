@@ -32,3 +32,10 @@ apps/*/.env.*
 apps/*/.env
 apps/*/.env.*
 !*.env.example
+
+# local app env files
+.env
+.env.*
+apps/*/.env
+apps/*/.env.*
+!*.env.example
