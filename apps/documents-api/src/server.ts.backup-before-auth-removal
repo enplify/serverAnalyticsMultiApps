@@ -6,6 +6,8 @@ import dotenv from "dotenv";
 import { meRoutes } from "./routes/me";
 import { documentRoutes } from "./routes/documents";
 import { healthRoutes } from "./routes/health";
+import { authRoutes } from "./routes/auth";
+
 dotenv.config();
 
 const app = Fastify({ logger: true });
@@ -67,6 +69,7 @@ async function bootstrap() {
   });
 
   await app.register(healthRoutes, { prefix: "/api/health" });
+  await app.register(authRoutes, { prefix: "/api/auth" });
   await app.register(meRoutes, { prefix: "/api/me" });
   await app.register(documentRoutes, { prefix: "/api/documents" });
 
