@@ -5,9 +5,6 @@ export const SESSION_COOKIE_NAME =
   process.env.SESSION_COOKIE_NAME ||
   "docs_session";
 
-export const DOCUMENT_ENTRY_VALIDATION_COOKIE_NAME = "docs_entry_validated";
-export const AUTH_RETURN_TO_COOKIE_NAME = "docs_auth_return_to";
-
 type SessionCookieSameSite = "strict" | "lax" | "none";
 
 function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
@@ -82,53 +79,21 @@ export function setNoStoreHeaders(reply: FastifyReply) {
 }
 
 export function clearNamedCookie(reply: FastifyReply, cookieName: string) {
-  const secureAttribute = getSessionCookieSecure() ? "; Secure" : "";
   const configuredDomain = getSessionCookieDomain();
 
-  const sameSiteValues = Array.from(
-    new Set<SessionCookieSameSite>([getSessionCookieSameSite(), "none", "lax"])
-  );
-
-  const domains = configuredDomain ? [configuredDomain, undefined] : [undefined];
-
-  const headers: string[] = [];
-
-  for (const domain of domains) {
-    const domainAttribute = domain ? `; Domain=${domain}` : "";
-
-    for (const sameSite of sameSiteValues) {
-      headers.push(
-        `${cookieName}=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly${secureAttribute}${domainAttribute}; SameSite=${formatSameSite(sameSite)}`
-      );
-    }
-  }
-
-  const existing = reply.getHeader("Set-Cookie");
-
-  if (Array.isArray(existing)) {
-    reply.header("Set-Cookie", [...existing.map(String), ...headers]);
-    return;
-  }
-
-  if (existing) {
-    reply.header("Set-Cookie", [String(existing), ...headers]);
-    return;
-  }
-
-  reply.header("Set-Cookie", headers);
+  reply.setCookie(cookieName, "", {
+    httpOnly: true,
+    secure: getSessionCookieSecure(),
+    sameSite: "lax",
+    domain: configuredDomain,
+    path: "/",
+    maxAge: 0,
+    expires: new Date(0)
+  });
 }
 
 export function clearSessionCookie(reply: FastifyReply) {
   clearNamedCookie(reply, SESSION_COOKIE_NAME);
 }
 
-export function clearDocumentEntryValidationCookie(reply: FastifyReply) {
-  clearNamedCookie(reply, DOCUMENT_ENTRY_VALIDATION_COOKIE_NAME);
-}
-
-export function clearAuthReturnToCookie(reply: FastifyReply) {
-  clearNamedCookie(reply, AUTH_RETURN_TO_COOKIE_NAME);
-}
-
 export const clearDocsSession = clearSessionCookie;
-export const clearDocsAuthReturnToCookie = clearAuthReturnToCookie;

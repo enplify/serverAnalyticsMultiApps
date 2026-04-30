@@ -3,83 +3,22 @@ import { getCuratorUserByToken, getGroupsForCuratorUser } from "../services/cura
 import { getTenantMappingByCuratorGroupId } from "../services/tenant-mapping";
 import { SESSION_TTL_SECONDS, signSession } from "../services/session";
 import {
+  clearNamedCookie,
   clearSessionCookie,
+  getDocumentEntryValidationTtlSeconds,
   getSessionCookieOptions,
   setNoStoreHeaders,
   SESSION_COOKIE_NAME
 } from "../config/security";
 
-const DOCUMENT_ENTRY_VALIDATION_COOKIE_NAME = "docs_entry_validated";
 const AUTH_RETURN_TO_COOKIE_NAME = "docs_auth_return_to";
-const DEFAULT_DOCUMENT_ENTRY_VALIDATION_TTL_SECONDS = 15;
-const AUTH_RETURN_TO_TTL_SECONDS = 300;
+const AUTH_APP_COOKIE_NAME = "portal_auth_app";
 
-function getDocumentEntryValidationTtlSeconds(): number {
-  const rawValue = process.env.DOCUMENT_ENTRY_VALIDATION_TTL_SECONDS;
-  const parsedValue = rawValue ? Number.parseInt(rawValue, 10) : NaN;
-
-  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
-    return DEFAULT_DOCUMENT_ENTRY_VALIDATION_TTL_SECONDS;
-  }
-
-  return Math.min(parsedValue, 60);
-}
-
-function getDefaultReturnTo(): string {
-  return process.env.APP_BASE_URL || "/documents";
-}
-
-function sanitizeReturnTo(rawReturnTo: string | undefined): string {
-  const fallback = getDefaultReturnTo();
-
-  if (!rawReturnTo) {
-    return fallback;
-  }
-
-  if (rawReturnTo.startsWith("/") && !rawReturnTo.startsWith("//")) {
-    return rawReturnTo;
-  }
-
-  try {
-    const parsedReturnTo = new URL(rawReturnTo);
-    const parsedFallback = new URL(fallback);
-
-    if (parsedReturnTo.origin === parsedFallback.origin) {
-      return rawReturnTo;
-    }
-  } catch {
-    // Invalid or relative non-path URL. Fall back below.
-  }
-
-  return fallback;
-}
-
-function setAuthReturnToCookie(reply: FastifyReply, returnTo: string) {
-  reply.setCookie(
-    AUTH_RETURN_TO_COOKIE_NAME,
-    returnTo,
-    getSessionCookieOptions(AUTH_RETURN_TO_TTL_SECONDS)
-  );
-}
-
-function clearNamedCookie(reply: FastifyReply, cookieName: string) {
-  for (const sameSite of ["lax", "none"] as const) {
-    reply.setCookie(cookieName, "", {
-      ...getSessionCookieOptions(0),
-      sameSite,
-      maxAge: 0,
-      expires: new Date(0)
-    });
-  }
-}
-
-function clearDocumentEntryValidationCookie(reply: FastifyReply) {
-  clearNamedCookie(reply, DOCUMENT_ENTRY_VALIDATION_COOKIE_NAME);
-}
-
-function clearAuthReturnToCookie(reply: FastifyReply) {
-  clearNamedCookie(reply, AUTH_RETURN_TO_COOKIE_NAME);
-}
+type AppConfig = {
+  appKey: string;
+  baseUrl: string;
+  entryValidationCookieName: string;
+};
 
 function extractTokenFromPayload(rawPayload: string): string | null {
   const candidates = [rawPayload];
@@ -106,14 +45,169 @@ function extractTokenFromPayload(rawPayload: string): string | null {
   return null;
 }
 
+function getAllowedApps(): Set<string> {
+  const raw = process.env.AUTH_ALLOWED_APPS || "documents,project1,project2";
+
+  return new Set(
+    raw
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+}
+
+function getDefaultAppBaseUrl(appKey: string): string | null {
+  if (appKey === "documents") {
+    return "https://dokumente.qa.analytics.enplify.de/documents";
+  }
+
+  if (appKey === "project1") {
+    return "https://projekt1.qa.analytics.enplify.de";
+  }
+
+  if (appKey === "project2") {
+    return "https://projekt2.qa.analytics.enplify.de";
+  }
+
+  return null;
+}
+
+function getAppBaseUrl(appKey: string): string | null {
+  const envKey = `AUTH_APP_${appKey.toUpperCase()}_BASE_URL`;
+  const configuredValue = process.env[envKey]?.trim();
+
+  if (configuredValue) {
+    return configuredValue.replace(/\/+$/, "");
+  }
+
+  return getDefaultAppBaseUrl(appKey);
+}
+
+function getEntryValidationCookieName(appKey: string): string {
+  if (appKey === "documents") {
+    return "docs_entry_validated";
+  }
+
+  return `${appKey}_entry_validated`;
+}
+
+function resolveAppConfig(rawApp: unknown): AppConfig | null {
+  const appKey = typeof rawApp === "string" ? rawApp.trim() : "";
+
+  if (!appKey) {
+    return null;
+  }
+
+  if (!getAllowedApps().has(appKey)) {
+    return null;
+  }
+
+  const baseUrl = getAppBaseUrl(appKey);
+
+  if (!baseUrl) {
+    return null;
+  }
+
+  return {
+    appKey,
+    baseUrl,
+    entryValidationCookieName: getEntryValidationCookieName(appKey)
+  };
+}
+
+function sanitizeReturnToForApp(rawReturnTo: unknown, appConfig: AppConfig): string {
+  if (typeof rawReturnTo !== "string" || !rawReturnTo.trim()) {
+    return appConfig.baseUrl;
+  }
+
+  const candidate = rawReturnTo.trim();
+
+  try {
+    const appBase = new URL(appConfig.baseUrl);
+
+    if (candidate.startsWith("/") && !candidate.startsWith("//")) {
+      return new URL(candidate, appBase.origin).toString();
+    }
+
+    const returnUrl = new URL(candidate);
+
+    if (returnUrl.origin !== appBase.origin) {
+      return appConfig.baseUrl;
+    }
+
+    return returnUrl.toString();
+  } catch {
+    return appConfig.baseUrl;
+  }
+}
+
+function encodeCookieValue(value: string): string {
+  return encodeURIComponent(value);
+}
+
+function decodeCookieValue(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function setShortLivedCookie(reply: FastifyReply, name: string, value: string, maxAge: number) {
+  reply.setCookie(name, value, getSessionCookieOptions(maxAge));
+}
+
+function clearAuthFlowCookies(reply: FastifyReply) {
+  clearNamedCookie(reply, AUTH_RETURN_TO_COOKIE_NAME);
+  clearNamedCookie(reply, AUTH_APP_COOKIE_NAME);
+}
+
+function clearEntryValidationCookies(reply: FastifyReply) {
+  const cookieNames = new Set<string>([
+    "docs_entry_validated",
+    "project1_entry_validated",
+    "project2_entry_validated"
+  ]);
+
+  for (const appKey of getAllowedApps()) {
+    cookieNames.add(getEntryValidationCookieName(appKey));
+  }
+
+  for (const cookieName of cookieNames) {
+    clearNamedCookie(reply, cookieName);
+  }
+}
+
 export async function authRoutes(app: FastifyInstance) {
   app.get("/curator/start", async (request, reply) => {
     setNoStoreHeaders(reply);
-    clearSessionCookie(reply);
-    clearDocumentEntryValidationCookie(reply);
 
-    const query = request.query as { returnTo?: string };
-    const returnTo = sanitizeReturnTo(query.returnTo);
+    const query = request.query as { returnTo?: string; app?: string };
+
+    const appConfig = resolveAppConfig(query.app);
+
+    if (!appConfig) {
+      reply.code(400);
+      return {
+        error: "Invalid app",
+        message:
+          "Missing or unsupported app. Provide a valid app query parameter, for example app=documents or app=project1."
+      };
+    }
+
+    const returnTo = sanitizeReturnToForApp(query.returnTo, appConfig);
+
+    clearNamedCookie(reply, SESSION_COOKIE_NAME);
+    clearNamedCookie(reply, appConfig.entryValidationCookieName);
+    clearNamedCookie(reply, AUTH_RETURN_TO_COOKIE_NAME);
+    clearNamedCookie(reply, AUTH_APP_COOKIE_NAME);
+
+    setShortLivedCookie(reply, AUTH_APP_COOKIE_NAME, appConfig.appKey, 300);
+    setShortLivedCookie(reply, AUTH_RETURN_TO_COOKIE_NAME, returnTo, 300);
 
     const curatorBaseUrl = process.env.CURATOR_BASE_URL;
     const callbackUrl = process.env.CURATOR_CALLBACK_URL;
@@ -123,9 +217,8 @@ export async function authRoutes(app: FastifyInstance) {
       return { error: "Curator auth configuration missing" };
     }
 
-    const redirectUrl = `${curatorBaseUrl}/fetchUser?redirect_url=${encodeURIComponent(callbackUrl)}`;
-
-    setAuthReturnToCookie(reply, returnTo);
+    const redirectUrl =
+      `${curatorBaseUrl.replace(/\/+$/, "")}/fetchUser?redirect_url=${encodeURIComponent(callbackUrl)}`;
 
     return reply.redirect(redirectUrl);
   });
@@ -144,6 +237,17 @@ export async function authRoutes(app: FastifyInstance) {
     if (!token) {
       reply.code(400);
       return { error: "Missing Curator token" };
+    }
+
+    const appConfig = resolveAppConfig(request.cookies?.[AUTH_APP_COOKIE_NAME]);
+
+    if (!appConfig) {
+      reply.code(400);
+      return {
+        error: "Missing auth app context",
+        message:
+          "The auth flow has no valid app context. Start authentication again from the target application."
+      };
     }
 
     const user = await getCuratorUserByToken(token);
@@ -190,7 +294,8 @@ export async function authRoutes(app: FastifyInstance) {
       {
         mappedGroupId: mappedGroup.group.frontend_group_id,
         mappedGroupName: mappedGroup.group.name,
-        tenantKey: mappedGroup.mapping.tenant_key
+        tenantKey: mappedGroup.mapping.tenant_key,
+        appKey: appConfig.appKey
       },
       "Curator group mapped to tenant"
     );
@@ -202,9 +307,11 @@ export async function authRoutes(app: FastifyInstance) {
       curatorGroupId: String(mappedGroup.group.frontend_group_id)
     });
 
-    const returnTo = sanitizeReturnTo(
-      request.cookies?.[AUTH_RETURN_TO_COOKIE_NAME] || process.env.APP_BASE_URL
+    const cookieReturnTo = decodeCookieValue(
+      request.cookies?.[AUTH_RETURN_TO_COOKIE_NAME]
     );
+
+    const returnTo = sanitizeReturnToForApp(cookieReturnTo, appConfig);
 
     reply.setCookie(
       SESSION_COOKIE_NAME,
@@ -213,12 +320,12 @@ export async function authRoutes(app: FastifyInstance) {
     );
 
     reply.setCookie(
-      DOCUMENT_ENTRY_VALIDATION_COOKIE_NAME,
+      appConfig.entryValidationCookieName,
       "1",
       getSessionCookieOptions(getDocumentEntryValidationTtlSeconds())
     );
 
-    clearAuthReturnToCookie(reply);
+    clearAuthFlowCookies(reply);
 
     return reply.redirect(returnTo);
   });
@@ -226,8 +333,8 @@ export async function authRoutes(app: FastifyInstance) {
   app.get("/logout", async (_request, reply) => {
     setNoStoreHeaders(reply);
     clearSessionCookie(reply);
-    clearDocumentEntryValidationCookie(reply);
-    clearAuthReturnToCookie(reply);
+    clearEntryValidationCookies(reply);
+    clearAuthFlowCookies(reply);
 
     const curatorLogoutUrl =
       process.env.CURATOR_LOGOUT_URL || "https://qa.analytics.enplify.de/user/logout";
@@ -238,8 +345,8 @@ export async function authRoutes(app: FastifyInstance) {
   app.post("/logout", async (_request, reply) => {
     setNoStoreHeaders(reply);
     clearSessionCookie(reply);
-    clearDocumentEntryValidationCookie(reply);
-    clearAuthReturnToCookie(reply);
+    clearEntryValidationCookies(reply);
+    clearAuthFlowCookies(reply);
 
     const curatorLogoutUrl =
       process.env.CURATOR_LOGOUT_URL || "https://qa.analytics.enplify.de/user/logout";
@@ -253,12 +360,19 @@ export async function authRoutes(app: FastifyInstance) {
   app.get("/local-logout", async (_request, reply) => {
     setNoStoreHeaders(reply);
     clearSessionCookie(reply);
-    clearDocumentEntryValidationCookie(reply);
-    clearAuthReturnToCookie(reply);
+    clearEntryValidationCookies(reply);
+    clearAuthFlowCookies(reply);
 
     return {
       result: "ok",
-      message: "Local document session cleared"
+      message: "Local auth session cleared"
+    };
+  });
+
+  app.get("/health", async () => {
+    return {
+      status: "ok",
+      service: "auth-api"
     };
   });
 }

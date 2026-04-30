@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const ENTRY_VALIDATION_COOKIE_NAME = "docs_entry_validated";
+const ENTRY_VALIDATION_COOKIE_NAME = "project1_entry_validated";
 
 function getAuthStartUrl(): string {
   const authBaseUrl = process.env.AUTH_BASE_URL;
