@@ -25,3 +25,10 @@ apps/*/.env.*
 .DS_Store
 .vscode
 .idea
+
+# environment / secrets
+.env
+.env.*
+apps/*/.env
+apps/*/.env.*
+!*.env.example
