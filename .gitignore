@@ -26,30 +26,9 @@ apps/*/.env.*
 .vscode
 .idea
 
-# environment / secrets
-.env
-.env.*
-apps/*/.env
-apps/*/.env.*
-!*.env.example
-
-# local app env files
-.env
-.env.*
-apps/*/.env
-apps/*/.env.*
-!*.env.example
-
-# local env files
-.env
-.env.*
-apps/*/.env
-apps/*/.env.*
-!*.env.example
-
-# local env files
-.env
-.env.*
-apps/*/.env
-apps/*/.env.*
-!*.env.example
+# local/manual backups
+*.backup
+*.bak
+*.backup-*
+*.backup-before-*
+*.old
