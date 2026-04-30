@@ -1,5 +1,5 @@
 {
-  "name": "@portal/web",
+  "name": "@portal/documents-web",
   "version": "1.0.0",
   "private": true,
   "scripts": {
