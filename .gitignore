@@ -1,0 +1,27 @@
+# dependencies
+node_modules
+
+# build output
+.next
+dist
+build
+.turbo
+coverage
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+
+# environment / secrets
+.env
+.env.*
+apps/*/.env
+apps/*/.env.*
+!*.env.example
+
+# OS/editor
+.DS_Store
+.vscode
+.idea
