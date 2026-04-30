@@ -39,3 +39,10 @@ apps/*/.env.*
 apps/*/.env
 apps/*/.env.*
 !*.env.example
+
+# local env files
+.env
+.env.*
+apps/*/.env
+apps/*/.env.*
+!*.env.example
